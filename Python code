@@ -1,0 +1,141 @@
+# **Python Code for Cab-Fare Prediction Project**
+
+
+#importing all the required packages
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+from fancyimpute import KNN #For KNN imputation for missing value analysis
+from sklearn.feature_selection import f_classif
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+import pydotplus as pdp
+from sklearn.externals.six import StringIO 
+import statsmodels.api as sm
+
+#Set the current working directory
+os.chdir(r"/content")
+#Reading the dataset
+data=pd.read_csv("Train.csv")
+#Analysing the structure of dataset
+data.head()
+
+#Analysing the datatypes of all columns in the dataset
+data.dtypes
+
+## **Missing Value Analysis**
+
+#Calculating whether there are any missing values initially
+missing_val = pd.DataFrame(data.isnull().sum()) 
+missing_val=missing_val.rename(columns={0:"Missing Values"})
+missing_val
+
+We find that there are no missing values in the dataset.
+
+Formatting the dataset for modeling purpose:
+
+#Now we are going to format the variables with object datatype as simple as possible. 
+#Let us analyse the values in is_holiday column
+data.is_holiday.value_counts()
+
+#Here we will find the is_holiday values and change them to 0 or 1 based on whether a holiday or not
+data.is_holiday[data.is_holiday!="None"]=1
+data.is_holiday[data.is_holiday=="None"]=0
+#Order of these lines of code is important
+
+The variable 'weather_type' is a major category and 'weather_description' is a minor category. But not variables describle the same, and so we consider minor category as it explains more and omit 'weather_type' variable.
+
+data=data.drop('weather_type',axis=1)
+data.columns
+
+Now we will create dummy variables for 'weather_description' variable, as it is a categorical variable with multiple categories.
+
+dummy=data.weather_description.value_counts()
+for i in dummy.index:
+  data[i]=[1 if (j==i) else 0 for j in data.weather_description]
+data.head()
+
+The weather_description variable categories are made into individual categories and so weather_description can be dropped.
+
+data=data.drop('weather_description',axis=1)
+
+#Date is formatted to datetime format
+data.date_time = pd.to_datetime(data.date_time, format="%Y-%m-%d %H:%M:%S")
+
+## Outlier Analysis
+
+df=data.copy()
+cnames=["air_pollution_index","humidity","wind_speed","wind_direction","visibility_in_miles","dew_point","temperature","rain_p_h","snow_p_h","clouds_all"]
+
+#Detect outliers and replace with NA
+
+for i in cnames:
+    q75, q25 = np.percentile(df.loc[:,i], [75 ,25])
+    iqr = q75 - q25
+    low = q25 - (iqr*1.5)
+    high = q75 + (iqr*1.5)
+    df.loc[df[i] < low,i] = np.nan
+    df.loc[df[i] > high,i] = np.nan
+
+
+missing_val = pd.DataFrame(df.loc[:,cnames].isnull().sum())
+missing_val.columns = ["Outliers"] 
+print (missing_val) 
+
+data_out= pd.DataFrame(KNN(k=3).fit_transform(df.iloc[:,1:]),columns=df.columns[1:])
+
+data = pd.concat([df.iloc[:,0:1],data_out.iloc[:,:]],axis=1)
+
+data.head()
+
+# Feature Selection
+
+data['Year'] = data['date_time'].dt.year
+data['Month'] = data['date_time'].dt.month
+data['Day'] = data['date_time'].dt.day
+data['Hour'] = data['date_time'].dt.hour
+
+data = data.drop('date_time',axis=1)
+
+corr = data.iloc[:,:].corr()
+
+#Fixing the figure size and generating heatmap
+f, ax = plt.subplots(figsize=(50,50))
+sns.heatmap(corr,square=True,annot=True,cmap=sns.diverging_palette(1000, 10, as_cmap=True), ax=ax)
+
+#Only clouds all has to be removed
+data = data.drop(['rain_p_h','snow_p_h','clouds_all','dew_point'],axis=1)
+
+# Feature Scaling
+
+for i in data.columns:
+  data[i]=(data[i]-min(data[i]))/(max(data[i]-min(data[i])))
+data.head()
+
+# Modeling
+
+train_data, test_data = train_test_split(data)
+
+model=sm.OLS(train_data.iloc[:,7],train_data.iloc[:,-7]).fit()
+
+predictions=model.predict(test_data.iloc[:,-7])
+
+def rmse(actual, predicted):
+    result = (np.mean((actual-predicted)**2))**0.5
+    return result
+
+print(rmse(test_data.iloc[:,7], predictions))
+
+y = pd.factorize(data['traffic_volume'])[1].reshape(-1, 1) 
+
+y
+
+forest_model = RandomForestRegressor(n_estimators = 10).fit(train_data.iloc[:,-7],y)
+
+tree_predictions = forest_model.predict(test_data.iloc[:,-7])
+
+print(rmse(test_data.iloc[:,7], tree_predictions))
